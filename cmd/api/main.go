@@ -67,8 +67,13 @@ func main() {
 		models: data.NewModels(db),
 	}
 
-	// The worker has a lifetime separate from each HTTP request. main keeps its
-	// cancel function so the signal handler can stop polling and interrupt work.
+	// The worker has a lifetime separate from each HTTP request. main creates one
+	// cancellable context, stores its cancellation function on app, and starts
+	// the worker once for the application. The shutdown coordinator in
+	// gracefulShutdown uses that stored function after HTTP shutdown, then waits
+	// for the worker's wait-group count to reach zero before serve returns. The
+	// defer is final cleanup; it does not replace explicit cancellation and
+	// waiting during SIGINT.
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	app.workerCancel = cancelWorker
 	defer cancelWorker()

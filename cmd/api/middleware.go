@@ -34,6 +34,14 @@ func (app *application) recoverPanic(next http.Handler) http.Handler {
 }
 
 func (app *application) gracefulShutdown(srv *http.Server) <-chan error {
+	// gracefulShutdown coordinates the complete shutdown lifecycle. Ctrl+C sends
+	// SIGINT, causing srv.Shutdown to stop accepting new requests and wait for
+	// active handlers within the 30-second context. Only after the request
+	// lifetime is drained does workerCancel close the worker context. The worker
+	// receives ctx.Done, returns from its select or cancellable timer, and runs
+	// defer app.wg.Done. Waiting after cancellation is essential: wg.Wait joins
+	// the goroutine before the process exits instead of racing with it. A deferred
+	// cancelWorker in main alone would run too late to coordinate this sequence.
 	shutdownError := make(chan error, 1)
 
 	go func() {
@@ -47,16 +55,12 @@ func (app *application) gracefulShutdown(srv *http.Server) <-chan error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Stop accepting new requests and let active handlers finish before
-		// waiting on the independently running worker.
 		if err := srv.Shutdown(ctx); err != nil {
 			shutdownError <- err
 			return
 		}
 
 		app.logger.Info("completing background tasks", "addr", srv.Addr)
-		// Cancellation closes ctx.Done in the worker; wg.Wait then becomes a
-		// bounded join rather than a race with a still-running goroutine.
 		if app.workerCancel != nil {
 			app.workerCancel()
 		}

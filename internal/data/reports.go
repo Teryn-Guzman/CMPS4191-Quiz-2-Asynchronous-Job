@@ -25,9 +25,20 @@ type ReportModel struct {
 	DB *sql.DB
 }
 
+// Generate builds the consumer activity report used by the worker. The query
+// starts at consumers so the requested consumer is the parent row; LEFT JOINs
+// preserve that row even when it has no API keys or jobs. Joining both child
+// tables can multiply rows, so COUNT(DISTINCT k.id) and COUNT(DISTINCT j.id)
+// prevent inflated totals. FILTER (WHERE ...) calculates separate counts for
+// each key or job status from the same grouped result.
+//
+// Jobs use the half-open interval created_at >= from and created_at < to.
+// That includes the start boundary but excludes the end boundary, preventing
+// adjacent report windows from counting the same job twice. GROUP BY c.id,
+// c.name produces one aggregate row for the consumer, and Scan copies that row
+// into ConsumerActivityReport. QueryRowContext returning no rows means the
+// requested consumer does not exist; other errors are actual report failures.
 func (m ReportModel) Generate(consumerID string, from, to time.Time) (*ConsumerActivityReport, error) {
-	// Start with the consumer so a valid consumer with no keys or jobs still
-	// produces a row; LEFT JOIN preserves that parent row while adding activity.
 	query := `
 		SELECT c.id, c.name,
 			COUNT(DISTINCT k.id) FILTER (WHERE k.status = 'active'),
@@ -42,10 +53,6 @@ func (m ReportModel) Generate(consumerID string, from, to time.Time) (*ConsumerA
 			AND j.created_at >= $2 AND j.created_at < $3
 		WHERE c.id = $1
 		GROUP BY c.id, c.name`
-	// Joining keys and jobs can create a Cartesian multiplication per consumer.
-	// DISTINCT counts each key/job once, while FILTER computes each status total
-	// from the same grouped result and the half-open date range avoids overlap.
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	report := &ConsumerActivityReport{From: from, To: to, GeneratedAt: time.Now()}
