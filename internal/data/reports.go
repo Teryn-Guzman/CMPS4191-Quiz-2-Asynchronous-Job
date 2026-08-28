@@ -26,6 +26,8 @@ type ReportModel struct {
 }
 
 func (m ReportModel) Generate(consumerID string, from, to time.Time) (*ConsumerActivityReport, error) {
+	// Start with the consumer so a valid consumer with no keys or jobs still
+	// produces a row; LEFT JOIN preserves that parent row while adding activity.
 	query := `
 		SELECT c.id, c.name,
 			COUNT(DISTINCT k.id) FILTER (WHERE k.status = 'active'),
@@ -40,6 +42,9 @@ func (m ReportModel) Generate(consumerID string, from, to time.Time) (*ConsumerA
 			AND j.created_at >= $2 AND j.created_at < $3
 		WHERE c.id = $1
 		GROUP BY c.id, c.name`
+	// Joining keys and jobs can create a Cartesian multiplication per consumer.
+	// DISTINCT counts each key/job once, while FILTER computes each status total
+	// from the same grouped result and the half-open date range avoids overlap.
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

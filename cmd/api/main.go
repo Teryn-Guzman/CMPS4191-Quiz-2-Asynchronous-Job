@@ -27,10 +27,10 @@ type config struct {
 }
 
 type application struct {
-	config config
-	logger *slog.Logger
-	models data.Models
-	wg     sync.WaitGroup
+	config       config
+	logger       *slog.Logger
+	models       data.Models
+	wg           sync.WaitGroup
 	workerCancel context.CancelFunc
 }
 
@@ -48,9 +48,7 @@ func main() {
 	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
 	flag.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", 15*time.Minute, "PostgreSQL max connection idle time")
 
-	
 	flag.Parse()
-
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -69,6 +67,8 @@ func main() {
 		models: data.NewModels(db),
 	}
 
+	// The worker has a lifetime separate from each HTTP request. main keeps its
+	// cancel function so the signal handler can stop polling and interrupt work.
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	app.workerCancel = cancelWorker
 	defer cancelWorker()
@@ -80,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 }
-	
+
 func openDB(cfg config) (*sql.DB, error) {
 	db, err := sql.Open("postgres", cfg.db.dsn)
 	if err != nil {

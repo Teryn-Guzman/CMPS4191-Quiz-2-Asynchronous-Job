@@ -9,6 +9,8 @@ import (
 )
 
 func (app *application) startReportWorker(ctx context.Context) {
+	// One application-level worker owns background execution. The wait group
+	// records the goroutine before it starts so shutdown can wait for it.
 	app.wg.Add(1)
 	go func() {
 		defer app.wg.Done()
@@ -16,6 +18,8 @@ func (app *application) startReportWorker(ctx context.Context) {
 		defer ticker.Stop()
 		for {
 			select {
+			// Cancellation wins over future polling and lets the worker leave
+			// without starting another job.
 			case <-ctx.Done():
 				app.logger.Info("report worker stopped")
 				return
@@ -30,6 +34,8 @@ func (app *application) startReportWorker(ctx context.Context) {
 }
 
 func (app *application) processNextReportJob(ctx context.Context) error {
+	// ClaimNext changes durable state to processing before this function does
+	// report work, making ownership explicit to status readers and other workers.
 	job, err := app.models.Jobs.ClaimNext(ctx)
 	if err != nil {
 		return err
@@ -37,7 +43,8 @@ func (app *application) processNextReportJob(ctx context.Context) error {
 	app.logger.Info("report job started", "job_id", job.PublicID,
 		"artificial_delay", app.config.reportDelay)
 
-	// The exact same simulated work now belongs to the worker, not the POST.
+	// The delay models expensive work after acceptance; the cancellable select
+	// allows shutdown to interrupt it instead of blocking until the timer ends.
 	if app.config.reportDelay > 0 {
 		timer := time.NewTimer(app.config.reportDelay)
 		defer timer.Stop()
@@ -50,6 +57,8 @@ func (app *application) processNextReportJob(ctx context.Context) error {
 
 	report, err := app.models.Reports.Generate(job.ConsumerID, job.Payload.From, job.Payload.To)
 	if err != nil {
+		// Failures become durable job state so a later GET can explain the
+		// outcome even though the POST already returned 202.
 		return app.models.Jobs.MarkFailed(ctx, job.ID, err.Error())
 	}
 	result, err := json.Marshal(report)

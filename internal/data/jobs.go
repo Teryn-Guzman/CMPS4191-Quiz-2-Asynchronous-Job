@@ -34,12 +34,16 @@ type JobModel struct {
 }
 
 func (m JobModel) Insert(job *Job) error {
+	// JSON lets one durable payload column carry the report's date range across
+	// the request/worker boundary without keeping the HTTP request alive.
 	payload, err := json.Marshal(job.Payload)
 	if err != nil {
 		return err
 	}
 	query := `INSERT INTO jobs (consumer_id, job_type, payload)
 		VALUES ($1, $2, $3) RETURNING id, public_id, status, created_at`
+	// RETURNING fills the in-memory job with database-generated IDs, the queued
+	// default, and its creation time before the 202 response is written.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	err = m.DB.QueryRowContext(ctx, query, job.ConsumerID, job.JobType, payload).Scan(
@@ -56,6 +60,8 @@ func (m JobModel) Insert(job *Job) error {
 }
 
 func (m JobModel) GetByPublicID(publicID string) (*Job, error) {
+	// Public IDs are the external lookup key; the internal UUID is retained for
+	// database updates but is never serialized in the API response.
 	query := `SELECT id, public_id, consumer_id, job_type, status, payload,
 		COALESCE(result, 'null'::jsonb), error_message, started_at, completed_at, created_at
 		FROM jobs WHERE public_id = $1`
@@ -79,6 +85,9 @@ func (m JobModel) GetByPublicID(publicID string) (*Job, error) {
 }
 
 func (m JobModel) ClaimNext(ctx context.Context) (*Job, error) {
+	// Selection and the transition to processing share one transaction. The row
+	// lock plus SKIP LOCKED prevents concurrent workers from claiming the same
+	// queued job while allowing another worker to look for different work.
 	tx, err := m.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -103,6 +112,8 @@ func (m JobModel) ClaimNext(ctx context.Context) (*Job, error) {
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	// A missing row is sql.ErrNoRows, which means the worker is idle rather
+	// than broken; callers deliberately suppress that normal polling result.
 	job.Status = "processing"
 	return &job, nil
 }

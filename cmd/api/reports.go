@@ -11,6 +11,9 @@ import (
 )
 
 func (app *application) createReportHandler(w http.ResponseWriter, r *http.Request) {
+	// The request lifetime ends after the job is recorded. Validation protects
+	// the worker from malformed dates or a missing consumer before any job is
+	// persisted.
 	var input struct {
 		ConsumerID string    `json:"consumer_id"`
 		From       time.Time `json:"from"`
@@ -36,6 +39,9 @@ func (app *application) createReportHandler(w http.ResponseWriter, r *http.Reque
 		JobType:    "consumer_activity_report",
 		Payload:    data.ReportPayload{From: input.From, To: input.To},
 	}
+	// Insert owns the durable acceptance boundary: PostgreSQL creates the
+	// queued state and identifiers, while the worker will consume the payload
+	// after this HTTP request has finished.
 	if err := app.models.Jobs.Insert(job); err != nil {
 		if errors.Is(err, data.ErrRecordNotFound) {
 			app.notFoundResponse(w, r)
@@ -46,6 +52,9 @@ func (app *application) createReportHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	statusURL := fmt.Sprintf("/v1/jobs/%s", job.PublicID)
+	// 202 means the command was accepted for later processing, not that the
+	// report already exists. The public ID and URL give the client a stable
+	// resource to inspect after the request ends.
 	headers := make(http.Header)
 	headers.Set("Location", statusURL)
 	response := envelope{"job_id": job.PublicID, "status": job.Status, "status_url": statusURL}
@@ -55,6 +64,8 @@ func (app *application) createReportHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
+	// GET observes the state owned by PostgreSQL; it does not execute or claim
+	// work and can therefore be called independently of the original POST.
 	job, err := app.models.Jobs.GetByPublicID(r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, data.ErrRecordNotFound) {

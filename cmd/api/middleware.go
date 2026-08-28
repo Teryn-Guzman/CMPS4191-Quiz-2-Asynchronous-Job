@@ -47,12 +47,16 @@ func (app *application) gracefulShutdown(srv *http.Server) <-chan error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
+		// Stop accepting new requests and let active handlers finish before
+		// waiting on the independently running worker.
 		if err := srv.Shutdown(ctx); err != nil {
 			shutdownError <- err
 			return
 		}
 
 		app.logger.Info("completing background tasks", "addr", srv.Addr)
+		// Cancellation closes ctx.Done in the worker; wg.Wait then becomes a
+		// bounded join rather than a race with a still-running goroutine.
 		if app.workerCancel != nil {
 			app.workerCancel()
 		}

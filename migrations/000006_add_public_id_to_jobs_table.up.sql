@@ -2,6 +2,7 @@
 BEGIN;
 
 ALTER TABLE jobs
+-- Expose an opaque lookup identifier while internal updates continue using id.
 ADD COLUMN IF NOT EXISTS public_id UUID NOT NULL DEFAULT uuidv4();
 
 COMMIT;
