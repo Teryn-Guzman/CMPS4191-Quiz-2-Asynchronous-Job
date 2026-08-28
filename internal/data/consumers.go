@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/lewisdalwin/gatekeeper/internal/validator"
 	"github.com/lib/pq"
+	"github.com/teryn-guzman/gatekeeper-asynchronous/internal/validator"
 )
 
 

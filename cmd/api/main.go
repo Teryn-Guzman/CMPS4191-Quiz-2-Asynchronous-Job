@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lewisdalwin/gatekeeper/internal/data"
 	_ "github.com/lib/pq"
+	"github.com/teryn-guzman/gatekeeper-asynchronous/internal/data"
 )
 
 type config struct {

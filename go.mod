@@ -1,4 +1,4 @@
-module github.com/lewisdalwin/gatekeeper
+module github.com/teryn-guzman/gatekeeper-asynchronous
 
 go 1.25.5
 

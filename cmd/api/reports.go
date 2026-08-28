@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lewisdalwin/gatekeeper/internal/data"
-	"github.com/lewisdalwin/gatekeeper/internal/validator"
+	"github.com/teryn-guzman/gatekeeper-asynchronous/internal/data"
+	"github.com/teryn-guzman/gatekeeper-asynchronous/internal/validator"
 )
 
 func (app *application) createReportHandler(w http.ResponseWriter, r *http.Request) {
