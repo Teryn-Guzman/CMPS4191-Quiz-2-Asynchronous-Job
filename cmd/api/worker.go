@@ -9,22 +9,33 @@ import (
 )
 
 func (app *application) startReportWorker(ctx context.Context) {
-	// Q23: The worker starts once in main for the whole application, not once per
-	// HTTP request, so the system has one queue monitor.
-	// Q24: context.WithCancel creates a worker lifetime, workerCtx is that
-	// context, cancelWorker stops it, and app.workerCancel stores the function for
-	// shutdown.
-	// Q25: app.wg.Add(1) is called before launching the goroutine so the wait
-	// group can track the worker while it is still alive.
-	// Q26: The goroutine runs the polling loop, and defer app.wg.Done() ensures
-	// the wait group decrements when the worker exits.
-	// Q27: The ticker creates periodic polling events at workerPollInterval.
-	// Q28: The select listens for either ctx.Done() or ticker.C and chooses the
-	// first event that arrives.
-	// Q29: A longer poll interval increases the delay before a newly queued job is
-	// noticed and started by the worker.
-	// Q30: deferring ticker.Stop() ensures the ticker is cleaned up when the loop
-	// exits.
+
+	// Q23: The worker is started once when the application starts. I don't want a
+	// new worker for every HTTP request because the worker's job is to continuously
+	// watch the queue for work.
+
+	// Q24: context.WithCancel gives the worker its own lifetime. workerCtx is the
+	// context the worker watches, cancelWorker tells it to stop, and the function
+	// is saved in app so the shutdown code can use it.
+
+	// Q25: app.wg.Add(1) happens before starting the goroutine so the wait group
+	// knows about the worker before it starts running.
+
+	// Q26: The goroutine contains the worker's polling loop. defer app.wg.Done()
+	// makes sure the wait group is updated when the worker eventually exits.
+
+	// Q27: The ticker is what makes the worker check for new jobs repeatedly instead
+	// of checking the database continuously.
+
+	// Q28: The select waits for either a shutdown signal or the next polling event.
+	// Whichever one happens first determines what the worker does next.
+
+	// Q29: If I increase the polling interval, the worker checks less often, so a
+	// newly queued job could sit in the database longer before being picked up.
+
+	// Q30: ticker.Stop() cleans up the ticker when the worker stops, so the ticker
+	// does not continue running after the polling loop has ended.
+
 	app.wg.Add(1)
 	go func() {
 		defer app.wg.Done()
@@ -48,15 +59,23 @@ func (app *application) startReportWorker(ctx context.Context) {
 }
 
 func (app *application) processNextReportJob(ctx context.Context) error {
-	// Q31: reportDelay is applied in processNextReportJob rather than the POST
-	// handler so acknowledgement time stays fast while completion time reflects the
-	// artificial work delay.
-	// Q32: time.NewTimer creates the delay, timer.C is the completion event, and
-	// ctx.Done() can interrupt the wait early.
-	// Q33: Cancellation allows the worker to stop waiting before the timer expires,
-	// so shutdown can interrupt the simulated delay.
-	// Q34: Increasing reportDelay affects completion time more strongly than
-	// acknowledgement time because only the worker waits for the artificial delay.
+	
+	// Q31: reportDelay is placed in processNextReportJob instead of the POST
+	// handler because I want the POST request to return quickly. Only the worker
+	// should experience the artificial processing delay.
+
+	// Q32: time.NewTimer starts the delay, timer.C tells the code when the delay
+	// has finished, and ctx.Done allows the wait to be interrupted if the worker
+	// is being shut down.
+
+	// Q33: Cancellation is useful here because the worker does not have to wait for
+	// the full delay if the application is shutting down. The context can interrupt
+	// the timer wait.
+
+	// Q34: Increasing reportDelay mainly makes the report take longer to complete.
+	// The acknowledgement time should stay mostly the same because the POST does
+	// not wait for the worker to finish.
+
 	job, err := app.models.Jobs.ClaimNext(ctx)
 	if err != nil {
 		return err

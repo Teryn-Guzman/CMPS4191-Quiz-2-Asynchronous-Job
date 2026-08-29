@@ -10,24 +10,35 @@ import (
 	"github.com/teryn-guzman/gatekeeper-asynchronous/internal/validator"
 )
 
-// Q01: Doing work inside the original HTTP request would block the client until
-// the report finishes, which makes acknowledgement latency rise and can exceed
-// the request timeout.
-// Q02: The requirement is to accept valid work quickly while letting expensive
-// report generation continue independently in a background worker.
-// Q03: The request lifetime ends when the POST returns 202, while the work
-// lifetime begins when the worker claims the job and ends when the job reaches a
-// terminal state.
-// Q04: The application needs a persistent job resource so the client can later
-// fetch the job's state and result after the original request has already ended.
-// Q05: POST /v1/reports asks the server to accept a report command for later
-// processing, and HTTP 202 Accepted promises only that the work was accepted.
-// Q06: 202 Accepted does not mean the report finished or that it will succeed;
-// the worker may still fail later during generation or marshaling.
-// Q07: The response must include the public job ID and a status URL so the
-// client can locate the job later with GET /v1/jobs/{id}.
-// Q08: PublicID is exposed instead of the internal database ID because the
-// client needs a stable external identifier without depending on DB internals.
+// Q01: If the report was generated inside the HTTP request, the client would
+// have to wait for all that work to finish before getting a response. That
+// would make the API slower and could eventually cause a timeout.
+
+// Q02: I understand the requirement as accepting the request quickly, then
+// allowing the expensive report generation to happen separately in the worker.
+
+// Q03: The HTTP request only lasts until the POST returns 202. The actual job
+// has its own lifetime, starting when the worker picks it up and ending when
+// the job is completed or fails.
+
+// Q04: Because the request is already finished, the application needs to save
+// the job in the database so the client can check its status and result later.
+
+// Q05: POST /v1/reports is basically telling the server to accept this report
+// request for processing. A 202 response tells the client that the request was
+// accepted, not that the report is already finished.
+
+// Q06: Getting a 202 does not guarantee that the report will succeed. The
+// worker still has to process it, and something could go wrong during that
+// process.
+
+// Q07: The response gives the client the public job ID and status URL so it
+// knows where to check the job later.
+
+// Q08: PublicID is used instead of exposing the database ID because the client
+// only needs an external identifier. This also keeps the database's internal
+// ID separate from what the API exposes.
+
 func (app *application) createReportHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		ConsumerID string    `json:"consumer_id"`
@@ -78,11 +89,12 @@ func (app *application) createReportHandler(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// Q09: GET /v1/jobs/{id} is a status lookup, not a new work submission; it
-// reads the job's current state and result from PostgreSQL.
-// Q10: queued means accepted but not yet claimed, processing means the worker
-// has claimed it, completed means the report was generated and stored, and
-// failed means the job ended with an error message.
+// Q09: GET /v1/jobs/{id} does not create or start another job. It simply looks
+// up the existing job and returns its current status and result from the database.
+
+// Q10: Queued means the job is waiting for the worker, processing means the
+// worker has picked it up, completed means the report finished successfully,
+// and failed means something went wrong while processing it.
 func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 	job, err := app.models.Jobs.GetByPublicID(r.PathValue("id"))
 	if err != nil {

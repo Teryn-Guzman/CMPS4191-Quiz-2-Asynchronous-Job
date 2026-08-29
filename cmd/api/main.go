@@ -67,16 +67,22 @@ func main() {
 		models: data.NewModels(db),
 	}
 
-	// Q44: When SIGINT arrives, the app starts the shutdown path while the worker
-	// continues to run independently of HTTP requests.
-	// Q45: srv.Shutdown closes the listener and waits for active HTTP work to
-	// finish before returning.
-	// Q46: app.workerCancel must run before app.wg.Wait() so the worker sees
-	// ctx.Done and can stop its polling loop.
-	// Q47: Deferring cancelWorker in main alone is not enough because it runs too
-	// late to stop the worker during the shutdown sequence.
-	// Q48: ctx.Done triggers the worker exit, defer app.wg.Done decrements the
-	// wait group, and app.wg.Wait ensures the goroutine has actually exited.
+	// Q44: When the app receives SIGINT, it starts shutting down instead of
+	// immediately stopping. The worker is separate from the HTTP server, so it
+	// can still be running while the HTTP server begins to shut down.
+
+	// Q45: srv.Shutdown stops the server from accepting new connections and gives
+	// the HTTP requests that are already running time to finish.
+
+	// Q46: I need to cancel the worker before calling app.wg.Wait() because otherwise
+	// the worker could keep running and Wait would have nothing telling it to stop.
+
+	// Q47: The defer in main is not enough because defer only runs when main is
+	// ending. I need to cancel the worker as part of the actual shutdown process.
+
+	// Q48: ctx.Done tells the worker that it should stop, app.wg.Done tells the
+	// wait group that the worker has finished, and app.wg.Wait makes the program
+	// wait until that actually happens before shutting down completely.
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	app.workerCancel = cancelWorker
 	defer cancelWorker()

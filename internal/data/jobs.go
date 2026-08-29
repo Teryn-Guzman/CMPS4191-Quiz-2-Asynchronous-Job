@@ -15,21 +15,31 @@ type ReportPayload struct {
 	To   time.Time `json:"to"`
 }
 
-// Q11: ConsumerID identifies the consumer in the job, JobType identifies the
-// task class, Status shows lifecycle stage, Payload stores the report window,
-// Result stores successful JSON, ErrorMessage stores failure detail, and the
-// timestamps track when the job was created, started, and completed.
-// Q12: Pointers are used for StartedAt and CompletedAt because those fields are
-// absent until a state transition occurs, and an absent error message indicates
-// that the job did not fail.
-// Q13: The payload is marshaled to JSON before insertion because the jobs table
-// stores it in a jsonb column and the worker needs to read the same input later.
-// Q14: The application supplies consumer_id, job_type, and payload while the
-// database supplies the generated id, public_id, default status, and created_at.
-// Q15: RETURNING writes the database-generated values back into the Go struct so
-// the handler can immediately return the public job ID and queued status.
-// Q16: A foreign-key violation means the job references a consumer that does not
-// exist, so the job cannot be inserted without a valid consumer row.
+// Q11: These fields describe the job from start to finish. ConsumerID tells me
+// who the job belongs to, JobType tells me what work needs to be done, Status
+// tells me where it is in the process, Payload contains the input, and Result
+// or ErrorMessage stores what happened. The timestamps help track when each
+// stage occurred.
+
+// Q12: StartedAt and CompletedAt are pointers because a new job does not have
+// those times yet. They only get values when the worker starts and finishes the
+// job.
+
+// Q13: The payload is converted to JSON before inserting it because the
+// database stores it in a jsonb column. This lets the worker retrieve the same
+// information later when it processes the job.
+
+// Q14: The application provides the information about the job, while the
+// database generates values such as the ID, public ID, default status, and
+// creation time.
+
+// Q15: RETURNING gives the application the values that PostgreSQL generated.
+// That means the handler immediately knows the public job ID and current status
+// to send back to the client.
+
+// Q16: A foreign-key violation means the consumer being referenced does not
+// exist. Since the job must belong to a valid consumer, PostgreSQL rejects it.
+
 type Job struct {
 	ID           string          `json:"-"`
 	PublicID     string          `json:"id"`
@@ -100,18 +110,27 @@ func (m JobModel) GetByPublicID(publicID string) (*Job, error) {
 }
 
 func (m JobModel) ClaimNext(ctx context.Context) (*Job, error) {
-	// Q17: The database transaction ensures the claim and state transition happen
-	// atomically before any worker starts the report.
-	// Q18: WHERE status = 'queued' AND job_type = 'consumer_activity_report'
-	// restricts work to eligible jobs that are waiting and of the correct type.
-	// Q19: ORDER BY created_at usually picks the oldest queued job, and LIMIT 1
-	// guarantees a single claim per attempt.
-	// Q20: FOR UPDATE locks the selected row while SKIP LOCKED makes other workers
-	// skip it instead of blocking on it.
-	// Q21: Selecting and updating within the same transaction prevents two workers
-	// from claiming the same queued job simultaneously.
-	// Q22: When no job is queued, the query returns sql.ErrNoRows, which is a
-	// normal idle condition rather than a worker failure.
+	
+	// Q17: The transaction keeps the process of finding and claiming a job together.
+	// The worker should not start processing a job until the database has successfully
+	// changed its state.
+
+	// Q18: These conditions make sure the worker only picks jobs that are still
+	// queued and are the specific type of report this worker knows how to process.
+
+	// Q19: ORDER BY created_at normally gives me the oldest waiting job first, while
+	// LIMIT 1 makes sure one worker attempt only claims one job.
+
+	// Q20: FOR UPDATE locks the selected job while it is being claimed. SKIP LOCKED
+	// lets another worker skip that locked job instead of waiting for it.
+
+	// Q21: Because selecting and updating happen inside the same transaction, two
+	// workers cannot successfully claim the same queued job at the same time.
+
+	// Q22: If there are no queued jobs, sql.ErrNoRows simply tells the worker that
+	// there is currently nothing to process. That is normal and not an error that
+	// should stop the worker.
+
 	tx, err := m.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -141,10 +160,13 @@ func (m JobModel) ClaimNext(ctx context.Context) (*Job, error) {
 }
 
 func (m JobModel) MarkCompleted(ctx context.Context, id string, result []byte) error {
-	// Q40: The generated report is marshaled before storing it so the result is
-	// persisted as JSON in the jobs table.
-	// Q41: MarkCompleted updates status to completed, stores the result JSON, and
-	// records completed_at to mark the final success state.
+
+	// Q40: The generated report is converted to JSON before being saved because
+	// the result needs to be stored in the database's JSON field.
+
+	// Q41: MarkCompleted changes the job to completed, saves the report result, and
+	// records the completion time. This gives the job a final successful state.
+
 	_, err := m.DB.ExecContext(ctx,
 		`UPDATE jobs SET status = 'completed', result = $2, completed_at = now() WHERE id = $1`,
 		id, result)
@@ -152,10 +174,15 @@ func (m JobModel) MarkCompleted(ctx context.Context, id string, result []byte) e
 }
 
 func (m JobModel) MarkFailed(ctx context.Context, id, message string) error {
-	// Q42: The original POST may still succeed while the worker later fails, so
-	// this method records the durable error state after the fact.
-	// Q43: Stored error_message and logs make it possible to diagnose a failed job
-	// later by calling GET /v1/jobs/{id} and inspecting the recorded failure.
+	
+	// Q42: The POST request can already have returned successfully by the time the
+	// worker finds an error. MarkFailed lets the worker save that failure to the
+	// database after the original request has ended.
+
+	// Q43: Saving the error message means I can find out what happened later instead
+	// of losing the error when the worker finishes. The client can see that failure
+	// through GET /v1/jobs/{id}.
+
 	_, err := m.DB.ExecContext(ctx,
 		`UPDATE jobs SET status = 'failed', error_message = $2, completed_at = now() WHERE id = $1`,
 		id, message)

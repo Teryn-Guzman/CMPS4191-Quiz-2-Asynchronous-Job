@@ -25,17 +25,25 @@ type ReportModel struct {
 	DB *sql.DB
 }
 
-// Q35: The report query starts from consumers and uses LEFT JOINs so a valid
-// consumer still appears even when it has no keys or jobs.
-// Q36: Joining api_keys and jobs can multiply rows, so COUNT(DISTINCT ...) is
-// used to avoid inflating counts for the same key or job.
-// Q37: FILTER (WHERE ...) counts only keys or jobs with a specific status, which
-// produces separate totals for active, revoked, queued, processing, completed,
-// and failed rows.
-// Q38: The query uses a half-open range created_at >= $2 and created_at < $3 so
-// adjacent report windows do not double-count a job on the boundary.
-// Q39: GROUP BY c.id, c.name collapses the joined data into one result row per
-// consumer, and QueryRowContext.Scan copies that row into the report struct.
+// Q35: The query starts with consumers and uses LEFT JOIN because I still want
+// to see a consumer even if they do not have any API keys or jobs.
+
+// Q36: Joining multiple tables can create duplicate combinations of rows. Using
+// COUNT(DISTINCT ...) prevents the same key or job from being counted more than
+// once.
+
+// Q37: FILTER lets the query count only rows that match a particular status.
+// This gives me separate totals instead of having to run a different query for
+// every status.
+
+// Q38: The query uses >= for the start and < for the end of the time range.
+// This means the end time is not included, which prevents two adjacent report
+// periods from counting the same job twice.
+
+// Q39: GROUP BY makes the results one row per consumer. QueryRowContext.Scan
+// then takes that row from the database and puts the values into the report
+// struct.
+
 func (m ReportModel) Generate(consumerID string, from, to time.Time) (*ConsumerActivityReport, error) {
 	query := `
 		SELECT c.id, c.name,
