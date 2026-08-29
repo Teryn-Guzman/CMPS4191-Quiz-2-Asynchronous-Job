@@ -67,13 +67,16 @@ func main() {
 		models: data.NewModels(db),
 	}
 
-	// The worker has a lifetime separate from each HTTP request. main creates one
-	// cancellable context, stores its cancellation function on app, and starts
-	// the worker once for the application. The shutdown coordinator in
-	// gracefulShutdown uses that stored function after HTTP shutdown, then waits
-	// for the worker's wait-group count to reach zero before serve returns. The
-	// defer is final cleanup; it does not replace explicit cancellation and
-	// waiting during SIGINT.
+	// Q44: When SIGINT arrives, the app starts the shutdown path while the worker
+	// continues to run independently of HTTP requests.
+	// Q45: srv.Shutdown closes the listener and waits for active HTTP work to
+	// finish before returning.
+	// Q46: app.workerCancel must run before app.wg.Wait() so the worker sees
+	// ctx.Done and can stop its polling loop.
+	// Q47: Deferring cancelWorker in main alone is not enough because it runs too
+	// late to stop the worker during the shutdown sequence.
+	// Q48: ctx.Done triggers the worker exit, defer app.wg.Done decrements the
+	// wait group, and app.wg.Wait ensures the goroutine has actually exited.
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	app.workerCancel = cancelWorker
 	defer cancelWorker()

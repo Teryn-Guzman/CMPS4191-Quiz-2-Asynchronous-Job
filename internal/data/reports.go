@@ -25,19 +25,17 @@ type ReportModel struct {
 	DB *sql.DB
 }
 
-// Generate builds the consumer activity report used by the worker. The query
-// starts at consumers so the requested consumer is the parent row; LEFT JOINs
-// preserve that row even when it has no API keys or jobs. Joining both child
-// tables can multiply rows, so COUNT(DISTINCT k.id) and COUNT(DISTINCT j.id)
-// prevent inflated totals. FILTER (WHERE ...) calculates separate counts for
-// each key or job status from the same grouped result.
-//
-// Jobs use the half-open interval created_at >= from and created_at < to.
-// That includes the start boundary but excludes the end boundary, preventing
-// adjacent report windows from counting the same job twice. GROUP BY c.id,
-// c.name produces one aggregate row for the consumer, and Scan copies that row
-// into ConsumerActivityReport. QueryRowContext returning no rows means the
-// requested consumer does not exist; other errors are actual report failures.
+// Q35: The report query starts from consumers and uses LEFT JOINs so a valid
+// consumer still appears even when it has no keys or jobs.
+// Q36: Joining api_keys and jobs can multiply rows, so COUNT(DISTINCT ...) is
+// used to avoid inflating counts for the same key or job.
+// Q37: FILTER (WHERE ...) counts only keys or jobs with a specific status, which
+// produces separate totals for active, revoked, queued, processing, completed,
+// and failed rows.
+// Q38: The query uses a half-open range created_at >= $2 and created_at < $3 so
+// adjacent report windows do not double-count a job on the boundary.
+// Q39: GROUP BY c.id, c.name collapses the joined data into one result row per
+// consumer, and QueryRowContext.Scan copies that row into the report struct.
 func (m ReportModel) Generate(consumerID string, from, to time.Time) (*ConsumerActivityReport, error) {
 	query := `
 		SELECT c.id, c.name,

@@ -9,14 +9,22 @@ import (
 )
 
 func (app *application) startReportWorker(ctx context.Context) {
-	// startReportWorker starts one application-level background worker rather
-	// than creating a worker per HTTP request. context.WithCancel is created by
-	// main; ctx represents the worker lifetime and its Done channel is the stop
-	// signal. Add(1) happens before launching the goroutine so shutdown cannot
-	// wait on an unregistered task, and Done signals that the goroutine exited.
-	// A ticker drives queue checks at workerPollInterval. Each select chooses
-	// between cancellation and the next poll; an empty queue returns
-	// sql.ErrNoRows, which is normal and is intentionally not logged as failure.
+	// Q23: The worker starts once in main for the whole application, not once per
+	// HTTP request, so the system has one queue monitor.
+	// Q24: context.WithCancel creates a worker lifetime, workerCtx is that
+	// context, cancelWorker stops it, and app.workerCancel stores the function for
+	// shutdown.
+	// Q25: app.wg.Add(1) is called before launching the goroutine so the wait
+	// group can track the worker while it is still alive.
+	// Q26: The goroutine runs the polling loop, and defer app.wg.Done() ensures
+	// the wait group decrements when the worker exits.
+	// Q27: The ticker creates periodic polling events at workerPollInterval.
+	// Q28: The select listens for either ctx.Done() or ticker.C and chooses the
+	// first event that arrives.
+	// Q29: A longer poll interval increases the delay before a newly queued job is
+	// noticed and started by the worker.
+	// Q30: deferring ticker.Stop() ensures the ticker is cleaned up when the loop
+	// exits.
 	app.wg.Add(1)
 	go func() {
 		defer app.wg.Done()
@@ -40,16 +48,15 @@ func (app *application) startReportWorker(ctx context.Context) {
 }
 
 func (app *application) processNextReportJob(ctx context.Context) error {
-	// processNextReportJob is where background work begins. ClaimNext durably
-	// changes the job to processing before the report query runs, so PostgreSQL
-	// owns the visible state while this worker owns execution. The artificial
-	// reportDelay belongs here rather than in POST, which keeps acknowledgement
-	// latency separate from completion latency. A timer plus select allows
-	// ctx.Done to interrupt the delay during shutdown; a normal timer event then
-	// permits report generation. Successful reports are marshaled and completed,
-	// while query or marshaling errors are stored through MarkFailed. Cancellation
-	// during the delay returns context.Canceled before either terminal update, so
-	// this starter implementation can leave a claimed job in processing.
+	// Q31: reportDelay is applied in processNextReportJob rather than the POST
+	// handler so acknowledgement time stays fast while completion time reflects the
+	// artificial work delay.
+	// Q32: time.NewTimer creates the delay, timer.C is the completion event, and
+	// ctx.Done() can interrupt the wait early.
+	// Q33: Cancellation allows the worker to stop waiting before the timer expires,
+	// so shutdown can interrupt the simulated delay.
+	// Q34: Increasing reportDelay affects completion time more strongly than
+	// acknowledgement time because only the worker waits for the artificial delay.
 	job, err := app.models.Jobs.ClaimNext(ctx)
 	if err != nil {
 		return err
