@@ -50,8 +50,12 @@ db/migrations/down: confirm
 ## db/migrations/force version=$1: force the migration version (to fix dirty state)
 .PHONY: db/migrations/force
 db/migrations/force:
-	@echo 'Forcing migration version to ${version}...'
-	migrate -path ./migrations -database ${GATEKEEPER_DB_DSN} force ${version}
+	@if [ -z "$(strip $(version))" ]; then \
+		echo 'Usage: make db/migrations/force version=<migration_version>'; \
+		exit 1; \
+	fi
+	@echo 'Forcing migration version to $(version)...'
+	migrate -path ./migrations -database ${GATEKEEPER_DB_DSN} force $(version)
 
 # ==================================================================================== #
 # QUALITY CONTROL

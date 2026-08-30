@@ -26,3 +26,14 @@ curl -i -X POST http://localhost:4000/consumers \
 curl -i -X POST http://localhost:4000/consumers \
   -H "Content-Type: application/json" \
   -d '{"name": "Dalwin Jones", "email": "dalwin@example.com"}'
+
+  go run ./cmd/api -db-dsn="$GATEKEEPER_DB_DSN" -report-delay=7s
+
+  curl --include --silent --show-error \
+  --write-out '\nacknowledgement_time=%{time_total}s\n' \
+  --header 'Content-Type: application/json' \
+  --data @request.json http://localhost:4000/v1/reports
+
+  curl --silent http://localhost:4000/v1/jobs/
+
+  psql "$GATEKEEPER_DB_DSN" -c "SELECT id, public_id, consumer_id, job_type, status, started_at, completed_at, created_at, result, error_message FROM jobs ORDER BY created_at DESC LIMIT 5;"
